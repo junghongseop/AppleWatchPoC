@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-final class PhoneRecordingViewModel: ObservableObject {
+final class RecordingSyncViewModel: ObservableObject {
     private let service: PhoneRecordingSyncService
     private var cancellable: AnyCancellable?
 
