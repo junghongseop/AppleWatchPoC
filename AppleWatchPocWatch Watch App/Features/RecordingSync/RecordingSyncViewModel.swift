@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-final class WatchRecordingViewModel: ObservableObject {
+final class RecordingSyncViewModel: ObservableObject {
     private let service: WatchRecordingSyncService
     private var cancellable: AnyCancellable?
 
