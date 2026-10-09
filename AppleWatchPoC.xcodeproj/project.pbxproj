@@ -394,6 +394,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AppleWatchPocWatch;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치에서 녹음해 아이폰으로 동기화하는 기능을 검증합니다.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.theo.AppleWatchPoC;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -427,6 +428,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AppleWatchPocWatch;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치에서 녹음해 아이폰으로 동기화하는 기능을 검증합니다.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.theo.AppleWatchPoC;
 				LD_RUNPATH_SEARCH_PATHS = (
