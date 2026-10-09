@@ -1,28 +1,8 @@
-//
-//  ContentView.swift
-//  AppleWatchPocWatch Watch App
-//
-//  Created by 정홍섭 on 10/8/26.
-//
-
 import SwiftUI
 import Combine
 
-struct ContentView: View {
-    var body: some View {
-        NavigationStack {
-            List {
-                NavigationLink("녹음 · 아이폰 동기화") {
-                    RecordingSyncView()
-                }
-            }
-            .navigationTitle("기술 검증")
-        }
-    }
-}
-
-private struct RecordingSyncView: View {
-    @EnvironmentObject private var sync: WatchRecordingViewModel
+struct RecordingSyncView: View {
+    @EnvironmentObject private var sync: RecordingSyncViewModel
     @Environment(\.scenePhase) private var scenePhase
     private let refreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -69,7 +49,7 @@ private struct RecordingSyncView: View {
 }
 
 private struct WatchConnectionStatusSection: View {
-    @EnvironmentObject private var sync: WatchRecordingViewModel
+    @EnvironmentObject private var sync: RecordingSyncViewModel
 
     var body: some View {
         Section("아이폰 연결 상태") {
