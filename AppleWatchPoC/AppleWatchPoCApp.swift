@@ -9,11 +9,11 @@ import SwiftUI
 
 @main
 struct AppleWatchPoCApp: App {
-    @StateObject private var sync = PhoneRecordingViewModel()
+    @StateObject private var sync = RecordingSyncViewModel()
 
     var body: some Scene {
         WindowGroup {
-            ContentView().environmentObject(sync)
+            HomeView().environmentObject(sync)
         }
     }
 }
