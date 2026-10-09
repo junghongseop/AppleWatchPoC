@@ -1,28 +1,8 @@
-//
-//  ContentView.swift
-//  AppleWatchPoC
-//
-//  Created by 정홍섭 on 10/7/26.
-//
-
 import SwiftUI
 import Combine
 
-struct ContentView: View {
-    var body: some View {
-        NavigationStack {
-            List {
-                NavigationLink("녹음 · 워치 동기화") {
-                    ReceivedRecordingsView()
-                }
-            }
-            .navigationTitle("기술 검증")
-        }
-    }
-}
-
-private struct ReceivedRecordingsView: View {
-    @EnvironmentObject private var sync: PhoneRecordingViewModel
+struct RecordingSyncView: View {
+    @EnvironmentObject private var sync: RecordingSyncViewModel
     @Environment(\.scenePhase) private var scenePhase
     private let refreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -85,7 +65,7 @@ private struct ReceivedRecordingsView: View {
 }
 
 private struct ConnectionStatusSection: View {
-    @EnvironmentObject private var sync: PhoneRecordingViewModel
+    @EnvironmentObject private var sync: RecordingSyncViewModel
 
     var body: some View {
         Section {
