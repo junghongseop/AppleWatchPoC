@@ -16,6 +16,9 @@ final class RecordingSyncViewModel: ObservableObject {
     var connectionState: PhoneConnectionState { service.connectionState }
     var errorMessage: String? { service.errorMessage }
     var playingURL: URL? { service.playingURL }
+    var speechTests: [SpeechTestResult] {
+        service.speechTests.values.sorted { $0.startedAt > $1.startedAt }
+    }
 
     func measurement(for url: URL) -> TransferMeasurement? { service.measurement(for: url) }
     func details(for url: URL) -> ReceivedRecordingDetails? { service.details(for: url) }
@@ -23,4 +26,7 @@ final class RecordingSyncViewModel: ObservableObject {
     func deleteRecordings(at offsets: IndexSet) { service.deleteRecordings(at: offsets) }
     func togglePlayback(_ url: URL) { service.togglePlayback(url) }
     func stopPlayback() { service.stopPlayback() }
+    func requestSpeechAuthorization() { service.requestSpeechAuthorization() }
+    func deleteSpeechTest(id: String) { service.deleteSpeechTest(id: id) }
+    func clearError() { service.errorMessage = nil }
 }
