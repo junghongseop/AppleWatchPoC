@@ -8,10 +8,26 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
     @Published private(set) var isRecording = false
     @Published private(set) var connectionState: WatchConnectionState = .checking
     @Published var errorMessage: String?
+    @Published private(set) var speechTestMode: String?
+    @Published private(set) var liveStreamInterrupted = false
+    @Published private(set) var currentInputDBFS: Double?
 
     private static let startTimesKey = "recordingConnectedTransferStartTimesV2"
+    private static let speechResetKey = "speechTestRecordingsResetV2"
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
+    private var speechEngine: AVAudioEngine?
+    private var speechFile: AVAudioFile?
+    private let speechQueue = DispatchQueue(label: "speech.test.audio")
+    private var pendingSamples = Data()
+    private var phoneLiveReady = false
+    private var speechID: String?
+    private var pendingStopID: String?
+    private var monitorRequested = false
+    private var monitorRecorder: AVAudioRecorder?
+    private var monitorTimer: Timer?
+    private var monitorURL: URL?
+    private var isPreparingSpeechTest = false
     private var activeProbeID: UUID?
     private let directory: URL
 
@@ -21,6 +37,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         super.init()
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            clearPreviousSpeechRecordingsIfNeeded()
             refreshRecordings()
         } catch {
             errorMessage = error.localizedDescription
@@ -33,8 +50,35 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         }
     }
 
+    private func clearPreviousSpeechRecordingsIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.speechResetKey) else { return }
+        do {
+            let files = try FileManager.default.contentsOfDirectory(at: directory,
+                                                                     includingPropertiesForKeys: nil)
+            for url in files where url.pathExtension == "caf" {
+                try FileManager.default.removeItem(at: url)
+            }
+            for key in UserDefaults.standard.dictionaryRepresentation().keys
+            where ["speechMode.", "speechNoise.", "speechDistance.",
+                   "speechAmbientDBFS.", "speechStreamInterrupted."].contains(where: key.hasPrefix) {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            UserDefaults.standard.set(true, forKey: Self.speechResetKey)
+        } catch {
+            errorMessage = "기존 시험 녹음을 삭제하지 못했습니다: \(error.localizedDescription)"
+        }
+    }
+
+    private func cancelPreviousSpeechTransfers(_ session: WCSession) {
+        for transfer in session.outstandingFileTransfers
+        where transfer.file.metadata?["speechMode"] != nil &&
+              transfer.file.metadata?["speechDataGeneration"] as? Int != 2 {
+            transfer.cancel()
+        }
+    }
+
     func startRecording() {
-        guard !isRecording else { return }
+        guard !isRecording, speechTestMode == nil else { return }
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -48,6 +92,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
     }
 
     private func beginRecording() {
+        stopMonitorRecorder()
         let url = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
         do {
             let session = AVAudioSession.sharedInstance()
@@ -70,6 +115,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         } catch {
             try? FileManager.default.removeItem(at: url)
             errorMessage = error.localizedDescription
+            if monitorRequested { beginMonitorRecorder() }
         }
     }
 
@@ -82,6 +128,301 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         try? AVAudioSession.sharedInstance().setActive(false)
         refreshRecordings()
         queuePendingRecordings()
+        if monitorRequested { beginMonitorRecorder() }
+    }
+
+    func startAmbientMonitoring() {
+        monitorRequested = true
+        AVAudioApplication.requestRecordPermission { [weak self] granted in
+            DispatchQueue.main.async {
+                guard let self, self.monitorRequested else { return }
+                if granted {
+                    self.beginMonitorRecorder()
+                } else {
+                    self.errorMessage = "마이크 권한을 허용해야 입력 레벨을 볼 수 있습니다."
+                }
+            }
+        }
+    }
+
+    func stopAmbientMonitoring() {
+        monitorRequested = false
+        stopMonitorRecorder()
+        currentInputDBFS = nil
+        if !isRecording && speechTestMode == nil {
+            try? AVAudioSession.sharedInstance().setActive(false)
+        }
+    }
+
+    private func beginMonitorRecorder() {
+        guard monitorRequested, monitorRecorder == nil, !isRecording,
+              speechTestMode == nil, !isPreparingSpeechTest else { return }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .default)
+            try session.setActive(true)
+            let recorder = try AVAudioRecorder(url: url, settings: [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 16_000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 32_000
+            ])
+            recorder.isMeteringEnabled = true
+            guard recorder.record() else {
+                throw NSError(domain: "AmbientMeter", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "마이크 입력 레벨을 시작할 수 없습니다."])
+            }
+            monitorRecorder = recorder
+            monitorURL = url
+            monitorTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+                guard let self, let recorder = self.monitorRecorder else { return }
+                recorder.updateMeters()
+                let reading = Double(recorder.averagePower(forChannel: 0))
+                self.currentInputDBFS = self.currentInputDBFS.map { $0 * 0.7 + reading * 0.3 } ?? reading
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func stopMonitorRecorder() {
+        monitorTimer?.invalidate()
+        monitorTimer = nil
+        monitorRecorder?.stop()
+        monitorRecorder = nil
+        if let monitorURL { try? FileManager.default.removeItem(at: monitorURL) }
+        monitorURL = nil
+    }
+
+    func startSpeechTest() {
+        guard !isRecording, speechTestMode == nil, pendingStopID == nil,
+              !isPreparingSpeechTest else { return }
+        guard let ambientLevel = currentInputDBFS else {
+            errorMessage = "마이크 입력 레벨을 확인한 뒤 녹음해 주세요."
+            return
+        }
+        if connectionState != .reachable {
+            errorMessage = "아이폰 앱을 열고 연결한 뒤 시작해 주세요."
+            return
+        }
+        isPreparingSpeechTest = true
+        AVAudioApplication.requestRecordPermission { [weak self] granted in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard granted else {
+                    self.isPreparingSpeechTest = false
+                    self.errorMessage = "마이크 권한을 허용해 주세요."
+                    return
+                }
+                self.prepareSpeechTest(ambientLevel: ambientLevel)
+            }
+        }
+    }
+
+    private func prepareSpeechTest(ambientLevel: Double) {
+        let id = UUID().uuidString
+        let engine = AVAudioEngine()
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        guard format.channelCount > 0, format.commonFormat == .pcmFormatFloat32 else {
+            isPreparingSpeechTest = false
+            errorMessage = "워치 마이크의 오디오 형식을 사용할 수 없습니다."
+            return
+        }
+        guard beginSpeechCapture(id: id, engine: engine, format: format,
+                                 ambientLevel: ambientLevel) else { return }
+        WCSession.default.sendMessage([
+            "speechTestEvent": "start", "id": id, "sampleRate": format.sampleRate,
+            "ambientDBFS": ambientLevel
+        ], replyHandler: { [weak self] reply in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if reply["ready"] as? Bool == true {
+                    let stopped = self.pendingStopID == id
+                    guard self.speechID == id || stopped else { return }
+                    if stopped { self.pendingStopID = nil }
+                    self.speechQueue.async {
+                        self.phoneLiveReady = true
+                        self.drainSpeechSamples(id: id,
+                            chunkBytes: Int(format.sampleRate * 0.25) * MemoryLayout<Float>.size)
+                        if stopped { self.finishLiveStream(id: id) }
+                    }
+                } else {
+                    self.abortSpeechTest(id: id, message: reply["reason"] as? String
+                                         ?? "아이폰에서 음성 인식을 시작할 수 없습니다.")
+                }
+            }
+        }, errorHandler: { [weak self] error in
+            DispatchQueue.main.async {
+                self?.abortSpeechTest(id: id, message: error.localizedDescription)
+            }
+        })
+    }
+
+    @discardableResult
+    private func beginSpeechCapture(id: String, engine: AVAudioEngine, format: AVAudioFormat,
+                                    ambientLevel: Double) -> Bool {
+        let url = directory.appendingPathComponent(id).appendingPathExtension("caf")
+        stopMonitorRecorder()
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .default)
+            try session.setActive(true)
+            let file = try AVAudioFile(forWriting: url, settings: format.settings,
+                                       commonFormat: .pcmFormatFloat32, interleaved: false)
+            speechQueue.sync {
+                pendingSamples.removeAll(keepingCapacity: true)
+                phoneLiveReady = false
+            }
+            liveStreamInterrupted = false
+            engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+                do { try file.write(from: buffer) }
+                catch {
+                    DispatchQueue.main.async { self?.errorMessage = error.localizedDescription }
+                }
+                guard let channel = buffer.floatChannelData?.pointee else { return }
+                let data = Data(bytes: channel, count: Int(buffer.frameLength) * MemoryLayout<Float>.size)
+                guard !data.isEmpty else { return }
+                self?.speechQueue.async { [weak self] in
+                    guard let self else { return }
+                    var sum = 0.0
+                    data.withUnsafeBytes { bytes in
+                        for sample in bytes.bindMemory(to: Float.self) {
+                            let value = Double(sample)
+                            sum += value * value
+                        }
+                    }
+                    let currentLevel = 20 * log10(max(sqrt(sum / Double(data.count / MemoryLayout<Float>.size)), 0.000_001))
+                    DispatchQueue.main.async {
+                        self.currentInputDBFS = self.currentInputDBFS.map { $0 * 0.7 + currentLevel * 0.3 }
+                            ?? currentLevel
+                    }
+                    self.pendingSamples.append(data)
+                    if self.phoneLiveReady {
+                        self.drainSpeechSamples(id: id,
+                            chunkBytes: Int(format.sampleRate * 0.25) * MemoryLayout<Float>.size)
+                    }
+                }
+            }
+            try engine.start()
+            speechEngine = engine
+            speechFile = file
+            speechID = id
+            speechTestMode = "both"
+            isPreparingSpeechTest = false
+            currentURL = url
+            UserDefaults.standard.set("both", forKey: "speechMode.\(id)")
+            UserDefaults.standard.set(ambientLevel, forKey: "speechAmbientDBFS.\(id)")
+            errorMessage = nil
+            return true
+        } catch {
+            engine.inputNode.removeTap(onBus: 0)
+            try? FileManager.default.removeItem(at: url)
+            try? AVAudioSession.sharedInstance().setActive(false)
+            errorMessage = error.localizedDescription
+            isPreparingSpeechTest = false
+            if monitorRequested { beginMonitorRecorder() }
+            return false
+        }
+    }
+
+    private func drainSpeechSamples(id: String, chunkBytes: Int) {
+        while pendingSamples.count >= chunkBytes {
+            let chunk = pendingSamples.prefix(chunkBytes)
+            pendingSamples.removeFirst(chunkBytes)
+            sendSpeechChunk(Data(chunk), id: id)
+        }
+    }
+
+    private func sendSpeechChunk(_ data: Data, id: String) {
+        guard WCSession.default.isReachable else {
+            markStreamInterrupted(id: id)
+            return
+        }
+        WCSession.default.sendMessage(["speechTestEvent": "chunk", "id": id, "samples": data],
+                                      replyHandler: { _ in }, errorHandler: { [weak self] _ in
+            self?.markStreamInterrupted(id: id)
+        })
+    }
+
+    private func markStreamInterrupted(id: String) {
+        UserDefaults.standard.set(true, forKey: "speechStreamInterrupted.\(id)")
+        DispatchQueue.main.async { self.liveStreamInterrupted = true }
+    }
+
+    private func abortSpeechTest(id: String, message: String) {
+        guard speechID == id || pendingStopID == id else { return }
+        speechEngine?.inputNode.removeTap(onBus: 0)
+        speechEngine?.stop()
+        speechEngine = nil
+        speechFile = nil
+        speechID = nil
+        pendingStopID = nil
+        speechTestMode = nil
+        let url = currentURL ?? directory.appendingPathComponent(id).appendingPathExtension("caf")
+        currentURL = nil
+        speechQueue.sync {
+            pendingSamples.removeAll()
+            phoneLiveReady = false
+        }
+        try? FileManager.default.removeItem(at: url)
+        UserDefaults.standard.removeObject(forKey: "speechMode.\(id)")
+        UserDefaults.standard.removeObject(forKey: "speechAmbientDBFS.\(id)")
+        try? AVAudioSession.sharedInstance().setActive(false)
+        if WCSession.default.isReachable {
+            WCSession.default.sendMessage(["speechTestEvent": "cancel", "id": id],
+                                          replyHandler: { _ in }, errorHandler: nil)
+        }
+        if monitorRequested { beginMonitorRecorder() }
+        refreshRecordings()
+        errorMessage = message
+    }
+
+    private func finishLiveStream(id: String) {
+        if phoneLiveReady && !pendingSamples.isEmpty {
+            sendSpeechChunk(pendingSamples, id: id)
+        } else if !phoneLiveReady {
+            markStreamInterrupted(id: id)
+        }
+        pendingSamples.removeAll()
+        phoneLiveReady = false
+        WCSession.default.sendMessage(["speechTestEvent": "stop", "id": id],
+                                      replyHandler: { [weak self] _ in
+            DispatchQueue.main.async { self?.queuePendingRecordings() }
+        }, errorHandler: { [weak self] _ in
+            self?.markStreamInterrupted(id: id)
+            DispatchQueue.main.async { self?.queuePendingRecordings() }
+        })
+    }
+
+    func stopSpeechTest() {
+        guard let id = speechID, speechTestMode != nil else { return }
+        speechEngine?.inputNode.removeTap(onBus: 0)
+        speechEngine?.stop()
+        speechEngine = nil
+        speechFile = nil
+        speechID = nil
+        speechTestMode = nil
+        currentURL = nil
+        try? AVAudioSession.sharedInstance().setActive(false)
+        let ready = speechQueue.sync { phoneLiveReady }
+        if ready {
+            speechQueue.async { [weak self] in self?.finishLiveStream(id: id) }
+        } else {
+            pendingStopID = id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self, self.pendingStopID == id else { return }
+                self.pendingStopID = nil
+                self.speechQueue.async { self.finishLiveStream(id: id) }
+            }
+        }
+        refreshRecordings()
+        if monitorRequested { beginMonitorRecorder() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.queuePendingRecordings()
+        }
     }
 
     func queuePendingRecordings() {
@@ -92,11 +433,25 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
             $0.file.metadata?["recordingID"] as? String
         })
         for url in recordings where url != currentURL {
+            if url.deletingPathExtension().lastPathComponent == pendingStopID { continue }
+            if url.pathExtension == "caf" && !UserDefaults.standard.bool(forKey: Self.speechResetKey) {
+                continue
+            }
             let id = url.deletingPathExtension().lastPathComponent
             guard !queued.contains(id) else { continue }
             let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             if connectionState == .reachable { markConnected(at: Date(), for: [id]) }
-            session.transferFile(url, metadata: ["recordingID": id, "fileBytes": bytes])
+            var metadata: [String: Any] = ["recordingID": id, "fileBytes": bytes,
+                                            "fileExtension": url.pathExtension]
+            if url.pathExtension == "caf" {
+                metadata["speechMode"] = UserDefaults.standard.string(forKey: "speechMode.\(id)") ?? "after"
+                metadata["speechDataGeneration"] = 2
+                if let level = UserDefaults.standard.object(forKey: "speechAmbientDBFS.\(id)") as? Double {
+                    metadata["speechAmbientDBFS"] = level
+                }
+                metadata["speechStreamInterrupted"] = UserDefaults.standard.bool(forKey: "speechStreamInterrupted.\(id)")
+            }
+            session.transferFile(url, metadata: metadata)
         }
         objectWillChange.send()
     }
@@ -136,10 +491,18 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
     }
 
     private func refreshRecordings() {
-        recordings = ((try? FileManager.default.contentsOfDirectory(
+        let files = ((try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "m4a" && $0 != currentURL }
-            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .filter { ["m4a", "caf"].contains($0.pathExtension) && $0 != currentURL }
+        let datedFiles = files.map { url in
+            let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+            return (url: url, date: values?.creationDate ?? values?.contentModificationDate ?? .distantPast)
+        }
+        recordings = datedFiles.sorted { left, right in
+            left.date == right.date
+                ? left.url.lastPathComponent > right.url.lastPathComponent
+                : left.date > right.date
+        }.map(\.url)
     }
 
     private func setConnectionStatus(_ reachable: Bool, session: WCSession) {
@@ -193,6 +556,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         DispatchQueue.main.async {
             if let error { self.errorMessage = error.localizedDescription }
             if state == .activated {
+                self.cancelPreviousSpeechTransfers(session)
                 self.setConnectionStatus(session.isReachable, session: session)
                 self.queuePendingRecordings()
                 self.refreshConnectionStatus()
@@ -239,7 +603,9 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         guard let id = userInfo["savedRecordingID"] as? String,
               UUID(uuidString: id) != nil else { return }
         DispatchQueue.main.async {
-            let url = self.directory.appendingPathComponent(id).appendingPathExtension("m4a")
+            let m4a = self.directory.appendingPathComponent(id).appendingPathExtension("m4a")
+            let caf = self.directory.appendingPathComponent(id).appendingPathExtension("caf")
+            let url = FileManager.default.fileExists(atPath: caf.path) ? caf : m4a
             do {
                 if FileManager.default.fileExists(atPath: url.path) {
                     try FileManager.default.removeItem(at: url)
