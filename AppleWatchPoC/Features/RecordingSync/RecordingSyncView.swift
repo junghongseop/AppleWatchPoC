@@ -15,9 +15,10 @@ struct RecordingSyncView: View {
                 }
                 ForEach(sync.recordings, id: \.lastPathComponent) { url in
                     VStack(alignment: .leading, spacing: 4) {
+                        Text(url.deletingPathExtension().lastPathComponent)
+                            .font(.caption.monospaced())
+                            .fixedSize(horizontal: false, vertical: true)
                         HStack {
-                            Text(url.deletingPathExtension().lastPathComponent)
-                                .lineLimit(1)
                             Spacer()
                             Button(sync.playingURL == url ? "중지" : "재생") {
                                 sync.togglePlayback(url)
