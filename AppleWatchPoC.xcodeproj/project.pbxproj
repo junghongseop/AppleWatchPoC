@@ -329,6 +329,7 @@
 				DEVELOPMENT_TEAM = HJGS4LQ7XH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "워치에서 녹음한 음성을 아이폰 화면에 텍스트로 표시하고 테스트 결과를 비교합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -361,6 +362,7 @@
 				DEVELOPMENT_TEAM = HJGS4LQ7XH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "워치에서 녹음한 음성을 아이폰 화면에 텍스트로 표시하고 테스트 결과를 비교합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -394,7 +396,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AppleWatchPocWatch;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치에서 녹음해 아이폰으로 동기화하는 기능을 검증합니다.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치 마이크 입력 레벨을 표시하고 녹음해 아이폰으로 전송합니다.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.theo.AppleWatchPoC;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -428,7 +430,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AppleWatchPocWatch;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치에서 녹음해 아이폰으로 동기화하는 기능을 검증합니다.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치 마이크 입력 레벨을 표시하고 녹음해 아이폰으로 전송합니다.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.theo.AppleWatchPoC;
 				LD_RUNPATH_SEARCH_PATHS = (
