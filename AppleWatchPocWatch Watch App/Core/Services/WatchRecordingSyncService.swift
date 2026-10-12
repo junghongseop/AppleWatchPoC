@@ -11,6 +11,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
     @Published private(set) var preparingContactless = false
     @Published var markerLabel = "커스텀 마커"
     @Published private(set) var motionStatus = "녹음 중 손목 모션 감지"
+    private var lastRecordingError: Error?
     private let motion = CMMotionManager()
     private var markerDetector = MotionMarkerDetector()
     private var contactlessStartCancelled = false
@@ -108,6 +109,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
     }
 
     private func beginRecording() {
+        lastRecordingError = nil
         stopMonitorRecorder()
         let url = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
         do {
@@ -131,14 +133,16 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
             errorMessage = nil
         } catch {
             try? FileManager.default.removeItem(at: url)
+            lastRecordingError = error
             errorMessage = error.localizedDescription
             if monitorRequested { beginMonitorRecorder() }
         }
     }
 
-    func stopRecording() {
+    func stopRecording(trigger: String = "워치 버튼") {
         guard isRecording else { return }
-        finishContactless(reason: "중지")
+        if contactlessRecording != nil { contactlessRecording?.stopTrigger = trigger }
+        finishContactless(reason: "사용자 요청")
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -658,19 +662,30 @@ extension WatchRecordingSyncService {
         guard !contactlessStartCancelled else { return }
         guard granted else { throw contactlessError("워치 앱에서 마이크 권한을 허용해 주세요.") }
         beginRecording()
-        guard isRecording else { throw contactlessError(errorMessage ?? "녹음 시작 실패") }
-        contactlessRecording = ContactlessRecording(startedAt: Date(), trigger: trigger)
+        guard isRecording else { throw lastRecordingError ?? contactlessError(errorMessage ?? "녹음 시작 실패") }
+        contactlessRecording = ContactlessRecording(startedAt: Date(), trigger: trigger,
+            executionMode: "foreground",
+            startApplicationState: currentApplicationState)
         persistContactless()
         markerDetector = MotionMarkerDetector()
         startMotionMarkers()
         WKInterfaceDevice.current().play(.start)
     }
 
-    func stopContactless() {
+    func stopContactless(trigger: String = "워치 버튼") {
         if preparingContactless { contactlessStartCancelled = true }
         guard contactlessRecording != nil else { return }
-        stopRecording()
+        stopRecording(trigger: trigger)
         WKInterfaceDevice.current().play(.stop)
+    }
+
+    var currentApplicationState: String {
+        switch WKApplication.shared().applicationState {
+        case .active: return "전면"
+        case .inactive: return "비활성"
+        case .background: return "백그라운드"
+        @unknown default: return "알 수 없음"
+        }
     }
 
     private func contactlessError(_ message: String) -> NSError {
