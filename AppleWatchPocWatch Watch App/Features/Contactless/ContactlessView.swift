@@ -28,7 +28,7 @@ struct ContactlessView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TextField("마커 이름", text: $service.markerLabel)
-                Text("한 번 집기: 시작\n두 번 집기: 중지\nAssistiveTouch에서 단축어를 지정하세요.")
+                Text("한 번 집기: 비접촉 녹음 시작\n두 번 집기: 비접촉 녹음 중지 또는 백그라운드 녹음 중지\nAssistiveTouch에서 단축어를 지정하세요.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
