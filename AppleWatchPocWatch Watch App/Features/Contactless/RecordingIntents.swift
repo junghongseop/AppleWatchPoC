@@ -27,7 +27,7 @@ struct StopContactlessRecordingIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         #if os(watchOS)
-        WatchRecordingSyncService.shared.stopContactless()
+        WatchRecordingSyncService.shared.stopContactless(trigger: "일반 단축어 / AssistiveTouch")
         #else
         try rejectPhoneExecution()
         #endif
@@ -43,6 +43,9 @@ struct RecordingShortcuts: AppShortcutsProvider {
         AppShortcut(intent: StopContactlessRecordingIntent(),
                     phrases: ["\(.applicationName) 비접촉 녹음 중지"],
                     shortTitle: "비접촉 녹음 중지", systemImageName: "stop.fill")
+        AppShortcut(intent: StopBackgroundRecordingIntent(),
+                    phrases: ["\(.applicationName) 백그라운드 녹음 중지"],
+                    shortTitle: "백그라운드 녹음 중지", systemImageName: "stop.circle")
     }
 }
 
