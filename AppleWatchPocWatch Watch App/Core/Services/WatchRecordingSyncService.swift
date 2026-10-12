@@ -2,8 +2,19 @@ import AVFoundation
 import Combine
 import Foundation
 import WatchConnectivity
+import CoreMotion
+import WatchKit
 
-final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDelegate {
+final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDelegate, AVAudioRecorderDelegate {
+    static let shared = WatchRecordingSyncService()
+    @Published private(set) var contactlessRecording: ContactlessRecording?
+    @Published private(set) var preparingContactless = false
+    @Published var markerLabel = "커스텀 마커"
+    @Published private(set) var motionStatus = "녹음 중 손목 모션 감지"
+    private let motion = CMMotionManager()
+    private var markerDetector = MotionMarkerDetector()
+    private var contactlessStartCancelled = false
+    private var preparingRecording = false
     @Published private(set) var recordings: [URL] = []
     @Published private(set) var isRecording = false
     @Published private(set) var connectionState: WatchConnectionState = .checking
@@ -38,10 +49,13 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             clearPreviousSpeechRecordingsIfNeeded()
+            recoverContactlessRecordings()
             refreshRecordings()
         } catch {
             errorMessage = error.localizedDescription
         }
+        NotificationCenter.default.addObserver(self, selector: #selector(audioInterrupted(_:)),
+                                               name: AVAudioSession.interruptionNotification, object: nil)
         if WCSession.isSupported() {
             WCSession.default.delegate = self
             WCSession.default.activate()
@@ -78,10 +92,12 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
     }
 
     func startRecording() {
-        guard !isRecording, speechTestMode == nil else { return }
+        guard !isRecording, speechTestMode == nil, !isPreparingSpeechTest, !preparingContactless, !preparingRecording else { return }
+        preparingRecording = true
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.preparingRecording = false
                 guard granted else {
                     self.errorMessage = "마이크 권한을 허용해 주세요."
                     return
@@ -108,6 +124,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
                 throw NSError(domain: "Recording", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "녹음을 시작할 수 없습니다."])
             }
+            recorder.delegate = self
             self.recorder = recorder
             currentURL = url
             isRecording = true
@@ -121,6 +138,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
 
     func stopRecording() {
         guard isRecording else { return }
+        finishContactless(reason: "중지")
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -199,7 +217,7 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
 
     func startSpeechTest() {
         guard !isRecording, speechTestMode == nil, pendingStopID == nil,
-              !isPreparingSpeechTest else { return }
+              !isPreparingSpeechTest, !preparingContactless, !preparingRecording else { return }
         guard let ambientLevel = currentInputDBFS else {
             errorMessage = "마이크 입력 레벨을 확인한 뒤 녹음해 주세요."
             return
@@ -443,6 +461,9 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
             if connectionState == .reachable { markConnected(at: Date(), for: [id]) }
             var metadata: [String: Any] = ["recordingID": id, "fileBytes": bytes,
                                             "fileExtension": url.pathExtension]
+            if let data = try? Data(contentsOf: contactlessURL(for: url)) {
+                metadata["contactlessRecording"] = data
+            }
             if url.pathExtension == "caf" {
                 metadata["speechMode"] = UserDefaults.standard.string(forKey: "speechMode.\(id)") ?? "after"
                 metadata["speechDataGeneration"] = 2
@@ -609,11 +630,140 @@ final class WatchRecordingSyncService: NSObject, ObservableObject, WCSessionDele
             do {
                 if FileManager.default.fileExists(atPath: url.path) {
                     try FileManager.default.removeItem(at: url)
+                    try? FileManager.default.removeItem(at: self.contactlessURL(for: url))
                 }
                 self.refreshRecordings()
             } catch {
                 self.errorMessage = error.localizedDescription
             }
         }
+    }
+}
+
+
+extension WatchRecordingSyncService {
+    @MainActor
+    func startContactless(trigger: String) async throws {
+        if contactlessRecording != nil { return }
+        guard !isRecording, speechTestMode == nil, !isPreparingSpeechTest,
+              !preparingRecording, !preparingContactless else {
+            throw contactlessError("다른 녹음이 진행 중입니다.")
+        }
+        preparingContactless = true
+        contactlessStartCancelled = false
+        defer { preparingContactless = false }
+        let granted = await withCheckedContinuation { continuation in
+            AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
+        }
+        guard !contactlessStartCancelled else { return }
+        guard granted else { throw contactlessError("워치 앱에서 마이크 권한을 허용해 주세요.") }
+        beginRecording()
+        guard isRecording else { throw contactlessError(errorMessage ?? "녹음 시작 실패") }
+        contactlessRecording = ContactlessRecording(startedAt: Date(), trigger: trigger)
+        persistContactless()
+        markerDetector = MotionMarkerDetector()
+        startMotionMarkers()
+        WKInterfaceDevice.current().play(.start)
+    }
+
+    func stopContactless() {
+        if preparingContactless { contactlessStartCancelled = true }
+        guard contactlessRecording != nil else { return }
+        stopRecording()
+        WKInterfaceDevice.current().play(.stop)
+    }
+
+    private func contactlessError(_ message: String) -> NSError {
+        NSError(domain: "Contactless", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func contactlessURL(for audio: URL) -> URL {
+        audio.deletingPathExtension().appendingPathExtension("contactless.json")
+    }
+
+    private func persistContactless() {
+        guard let currentURL, let contactlessRecording else { return }
+        do {
+            try JSONEncoder().encode(contactlessRecording).write(to: contactlessURL(for: currentURL), options: .atomic)
+        } catch { errorMessage = "마커 저장 실패: \(error.localizedDescription)" }
+    }
+
+    private func startMotionMarkers() {
+        guard motion.isDeviceMotionAvailable else {
+            motionStatus = "이 기기에서 손목 모션을 사용할 수 없습니다."
+            return
+        }
+        motionStatus = "손목 흔들기 감지 중"
+        motion.deviceMotionUpdateInterval = 1.0 / 25
+        motion.startDeviceMotionUpdates(to: .main) { [weak self] sample, error in
+            guard let self else { return }
+            if let error {
+                self.motionStatus = "모션 오류: \(error.localizedDescription)"
+                self.motion.stopDeviceMotionUpdates()
+                return
+            }
+            guard let sample, let recorder = self.recorder, self.contactlessRecording != nil else { return }
+            let a = sample.userAcceleration
+            let r = sample.rotationRate
+            let acceleration = sqrt(a.x*a.x + a.y*a.y + a.z*a.z)
+            let rotation = sqrt(r.x*r.x + r.y*r.y + r.z*r.z)
+            let offset = recorder.currentTime
+            guard self.markerDetector.detect(acceleration: acceleration, rotation: rotation, time: offset) else { return }
+            let label = self.markerLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.contactlessRecording?.markers.append(MotionMarker(id: UUID(), offset: offset,
+                label: label.isEmpty ? "커스텀 마커" : String(label.prefix(80))))
+            self.persistContactless()
+            WKInterfaceDevice.current().play(.click)
+        }
+    }
+
+    private func finishContactless(reason: String) {
+        guard contactlessRecording != nil else { return }
+        motion.stopDeviceMotionUpdates()
+        contactlessRecording?.endedAt = Date()
+        contactlessRecording?.endReason = reason
+        persistContactless()
+        contactlessRecording = nil
+        motionStatus = "녹음 중 손목 모션 감지"
+    }
+
+    private func recoverContactlessRecordings() {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for audio in files where audio.pathExtension == "m4a" {
+            let sidecar = contactlessURL(for: audio)
+            guard let data = try? Data(contentsOf: sidecar),
+                  var record = try? JSONDecoder().decode(ContactlessRecording.self, from: data),
+                  record.endedAt == nil else { continue }
+            let duration = (try? AVAudioPlayer(contentsOf: audio).duration) ?? 0
+            record.endedAt = record.startedAt.addingTimeInterval(duration)
+            record.endReason = "앱 종료 후 복구 (종료 시각은 파일 길이로 추정)"
+            record.markers = record.markers.filter { $0.offset <= duration }
+            try? JSONEncoder().encode(record).write(to: sidecar, options: .atomic)
+        }
+    }
+
+    @objc private func audioInterrupted(_ notification: Notification) {
+        guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+        DispatchQueue.main.async {
+            if self.contactlessRecording != nil {
+                self.finishContactless(reason: "오디오 인터럽트")
+                self.stopRecording()
+                self.errorMessage = "오디오 인터럽트로 녹음이 종료되었습니다."
+            }
+        }
+    }
+
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        guard recorder === self.recorder, isRecording else { return }
+        finishContactless(reason: flag ? "시스템 종료" : "녹음 오류")
+        stopRecording()
+    }
+
+    func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+        guard recorder === self.recorder else { return }
+        finishContactless(reason: "인코딩 오류")
+        stopRecording()
+        errorMessage = error?.localizedDescription ?? "녹음 인코딩 오류"
     }
 }

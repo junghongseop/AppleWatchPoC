@@ -12,6 +12,7 @@ struct TransferMeasurement: Codable {
 struct ReceivedRecordingDetails: Codable {
     let receivedAt: Date
     let durationSeconds: Double
+    var contactless: ContactlessRecording? = nil
 }
 
 struct SpeechTestResult: Codable {

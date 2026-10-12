@@ -5,7 +5,7 @@ final class RecordingSyncViewModel: ObservableObject {
     private let service: WatchRecordingSyncService
     private var cancellable: AnyCancellable?
 
-    init(service: WatchRecordingSyncService = WatchRecordingSyncService()) {
+    init(service: WatchRecordingSyncService = .shared) {
         self.service = service
         cancellable = service.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()

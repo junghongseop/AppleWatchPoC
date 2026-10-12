@@ -395,6 +395,7 @@
 				DEVELOPMENT_TEAM = HJGS4LQ7XH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Configuration/WatchInfo.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AppleWatchPocWatch;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치 마이크 입력 레벨을 표시하고 녹음해 아이폰으로 전송합니다.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
@@ -429,6 +430,7 @@
 				DEVELOPMENT_TEAM = HJGS4LQ7XH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Configuration/WatchInfo.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AppleWatchPocWatch;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "워치 마이크 입력 레벨을 표시하고 녹음해 아이폰으로 전송합니다.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";

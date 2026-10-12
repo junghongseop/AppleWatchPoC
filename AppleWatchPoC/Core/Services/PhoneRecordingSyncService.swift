@@ -346,6 +346,7 @@ final class PhoneRecordingSyncService: NSObject, ObservableObject, WCSessionDele
             do {
                 if playingURL == url { stopPlayback() }
                 try FileManager.default.removeItem(at: url)
+                try? FileManager.default.removeItem(at: url.deletingPathExtension().appendingPathExtension("contactless.json"))
                 measurements.removeValue(forKey: url.deletingPathExtension().lastPathComponent)
                 recordingDetails.removeValue(forKey: url.deletingPathExtension().lastPathComponent)
                 speechTests.removeValue(forKey: url.deletingPathExtension().lastPathComponent)
@@ -379,14 +380,25 @@ final class PhoneRecordingSyncService: NSObject, ObservableObject, WCSessionDele
         var changed = false
         for url in files {
             let id = url.deletingPathExtension().lastPathComponent
-            guard recordingDetails[id] == nil else { continue }
+            let sidecar = url.deletingPathExtension().appendingPathExtension("contactless.json")
+            let contactless = (try? Data(contentsOf: sidecar)).flatMap {
+                try? JSONDecoder().decode(ContactlessRecording.self, from: $0)
+            }
+            if var existing = recordingDetails[id] {
+                if existing.contactless == nil, let contactless {
+                    existing.contactless = contactless
+                    recordingDetails[id] = existing
+                    changed = true
+                }
+                continue
+            }
             let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
             let receivedAt = (attributes?[.creationDate] as? Date)
                 ?? (attributes?[.modificationDate] as? Date)
                 ?? .distantPast
             let duration = (try? AVAudioPlayer(contentsOf: url).duration) ?? 0
             recordingDetails[id] = ReceivedRecordingDetails(
-                receivedAt: receivedAt, durationSeconds: duration
+                receivedAt: receivedAt, durationSeconds: duration, contactless: contactless
             )
             changed = true
         }
@@ -505,6 +517,10 @@ final class PhoneRecordingSyncService: NSObject, ObservableObject, WCSessionDele
             if !FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.moveItem(at: file.fileURL, to: destination)
             }
+            if let data = file.metadata?["contactlessRecording"] as? Data {
+                _ = try JSONDecoder().decode(ContactlessRecording.self, from: data)
+                try data.write(to: destination.deletingPathExtension().appendingPathExtension("contactless.json"), options: .atomic)
+            }
             let receivedAt = Date()
             let duration = (try? AVAudioPlayer(contentsOf: destination).duration) ?? 0
             session.transferUserInfo(["savedRecordingID": id])
@@ -537,7 +553,10 @@ final class PhoneRecordingSyncService: NSObject, ObservableObject, WCSessionDele
                 }
                 if firstReceipt {
                     self.recordingDetails[id] = ReceivedRecordingDetails(
-                        receivedAt: receivedAt, durationSeconds: duration
+                        receivedAt: receivedAt, durationSeconds: duration,
+                        contactless: (file.metadata?["contactlessRecording"] as? Data).flatMap {
+                            try? JSONDecoder().decode(ContactlessRecording.self, from: $0)
+                        }
                     )
                     self.saveDetails()
                 }

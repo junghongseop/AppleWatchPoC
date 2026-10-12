@@ -4,6 +4,9 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             List {
+                NavigationLink("워치 비접촉 백그라운드 제어") {
+                    ContactlessView()
+                }
                 NavigationLink("녹음 · 아이폰 동기화") {
                     RecordingSyncView()
                 }
