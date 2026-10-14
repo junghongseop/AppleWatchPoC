@@ -329,6 +329,8 @@
 				DEVELOPMENT_TEAM = HJGS4LQ7XH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "전면 카메라로 손동작을 인식하고 사진과 영상을 기록합니다.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "손동작으로 음성 녹음과 소리가 포함된 영상을 기록합니다.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "워치에서 녹음한 음성을 아이폰 화면에 텍스트로 표시하고 테스트 결과를 비교합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -362,6 +364,8 @@
 				DEVELOPMENT_TEAM = HJGS4LQ7XH;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "전면 카메라로 손동작을 인식하고 사진과 영상을 기록합니다.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "손동작으로 음성 녹음과 소리가 포함된 영상을 기록합니다.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "워치에서 녹음한 음성을 아이폰 화면에 텍스트로 표시하고 테스트 결과를 비교합니다.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
